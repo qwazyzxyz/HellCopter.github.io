@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Hell&copter - Elite Strike</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        :root {
+            --bg-color: #0d0d0d;
+            --nes-red: #e74c3c;
+            --nes-blue: #3498db;
+            --nes-yellow: #f1c40f;
+            --nes-white: #ecf0f1;
+            --nes-dark: #212529;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Press+Start+2P', cursive;
+            color: var(--nes-white);
+            image-rendering: pixelated;
+        }
+
+        #game-container {
+            position: relative;
+            border: 8px solid #333;
+            background-color: #000;
+            outline: 4px solid #111;
+            box-shadow: 0 0 0 12px #222, 0 20px 50px rgba(0,0,0,0.9);
+        }
+
+        canvas {
+            display: block;
+            background: #1e392a; 
+            image-rendering: pixelated; 
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            right: 15px;
+            pointer-events: none;
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            text-shadow: 2px 2px 0px #000;
+            z-index: 20;
+            letter-spacing: -1px;
+        }
+
+        #start-screen, #game-over {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            z-index: 30;
+        }
+
+        h1 { 
+            font-size: 26px; 
+            margin-bottom: 20px; 
+            color: var(--nes-red); 
+            text-shadow: 4px 4px 0px #4a0000;
+            letter-spacing: 2px;
+        }
+
+        p {
+            font-size: 10px;
+            line-height: 1.6;
+            text-shadow: 2px 2px 0px #000;
+        }
+
+        .btn {
+            background: var(--nes-white);
+            border: none;
+            border-bottom: 6px solid #bdc3c7;
+            color: var(--nes-dark);
+            padding: 15px 25px;
+            cursor: pointer;
+            font-family: 'Press+Start+2P', cursive;
+            font-size: 12px;
+            margin-top: 20px;
+            transition: all 0.1s;
+        }
+
+        .btn:hover {
+            background: var(--nes-yellow);
+            border-bottom-color: #d4ac0d;
+        }
+
+        .btn:active {
+            transform: translateY(4px);
+            border-bottom-width: 2px;
+            margin-bottom: 4px;
+        }
+
+        .controls-hint {
+            margin-top: 40px;
+            font-size: 8px;
+            color: #777;
+            line-height: 2.2;
+            text-transform: uppercase;
+        }
+
+        .highlight {
+            color: var(--nes-yellow);
+        }
+
+        @media (max-width: 600px) {
+            #game-container { width: 95vw; height: 80vh; border-width: 4px; outline: none; box-shadow: none; }
+            canvas { width: 100%; height: 100%; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="ui-overlay">
+            <div>1UP:<span id="score-val" class="highlight">0000</span></div>
+            <div>WEP:<span id="weapon-type" class="highlight">READY</span></div>
+            <div>HP:<span id="hp-val">100</span></div>
+        </div>
+
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="start-screen">
+            <h1>HELL&COPTER</h1>
+            <p class="highlight">MISSION: SEARCH & DESTROY</p>
+            <button class="btn" onclick="startGame()">START GAME</button>
+            <div class="controls-hint">
+                [ARROWS] PILOT HELI<br>
+                [SPACE] AIR-TO-AIR MISSILES<br>
+                [CTRL] ANTI-TANK BUSTER
+            </div>
+        </div>
+
+        <div id="game-over" style="display: none;">
+            <h1 style="color: var(--nes-red);">MISSION FAILED</h1>
+            <p>FINAL SCORE: <span id="final-score" class="highlight">0</span></p>
+            <button class="btn" onclick="startGame()">CONTINUE?</button>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreVal = document.getElementById('score-val');
+    const hpVal = document.getElementById('hp-val');
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over');
+    const finalScoreTxt = document.getElementById('final-score');
+    const weaponTypeTxt = document.getElementById('weapon-type');
+
+    const PIXEL_SIZE = 4;
+    let gameActive = false;
+    let score = 0;
+    let frame = 0;
+
+    const player = {
+        x: 0, y: 0, w: 60, h: 52, 
+        speed: 4.5, hp: 100, 
+        rotation: 0,
+        rockets: [],
+        lastShot: 0,
+        shotDelay: 12,
+        lastAltShot: 0,
+        altShotDelay: 50
+    };
+
+    let enemies = [];
+    let particles = [];
+    let keys = {};
+    let backgroundLayers = { ground: [] };
+
+    const SHADOW_OFFSET = 16;
+    const SHADOW_COLOR = 'rgba(0, 0, 0, 0.45)';
+
+    function resize() {
+        canvas.width = 400;
+        canvas.height = 600;
+        player.x = canvas.width / 2 - player.w / 2;
+        player.y = canvas.height - 140;
+    }
+
+    window.addEventListener('keydown', e => {
+        keys[e.code] = true;
+        if(['ControlLeft', 'ControlRight', 'ArrowUp', 'ArrowDown', 'Space', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+            e.preventDefault();
+        }
+    });
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    function spawnTerrain(yPos = -160) {
+        const isLake = Math.random() > 0.6;
+        backgroundLayers.ground.push({
+            x: Math.random() * (canvas.width / PIXEL_SIZE) * PIXEL_SIZE - 40,
+            y: yPos,
+            w: (10 + Math.random() * 15) * PIXEL_SIZE,
+            h: (8 + Math.random() * 12) * PIXEL_SIZE,
+            color: isLake ? '#1a6fa5' : '#145214',
+            darkColor: isLake ? '#0e4a71' : '#0a3d0a',
+            type: isLake ? 'lake' : 'forest',
+            speed: 2
+        });
+    }
+
+    function initGame() {
+        score = 0;
+        player.hp = 100;
+        player.rotation = 0;
+        player.rockets = [];
+        enemies = [];
+        particles = [];
+        backgroundLayers.ground = [];
+        for(let i=0; i<15; i++) spawnTerrain(Math.random() * canvas.height);
+        updateUI();
+    }
+
+    function startGame() {
+        resize();
+        initGame();
+        startScreen.style.display = 'none';
+        gameOverScreen.style.display = 'none';
+        gameActive = true;
+        requestAnimationFrame(gameLoop);
+    }
+
+    function updateUI() {
+        scoreVal.innerText = score.toString().padStart(4, '0');
+        hpVal.innerText = player.hp;
+        hpVal.style.color = player.hp < 40 ? 'var(--nes-red)' : 'var(--nes-white)';
+        
+        const altCooldown = Math.max(0, player.altShotDelay - (frame - player.lastAltShot));
+        if (altCooldown > 0) {
+            weaponTypeTxt.innerText = "WAIT";
+            weaponTypeTxt.style.color = "#777";
+        } else {
+            weaponTypeTxt.innerText = "READY";
+            weaponTypeTxt.style.color = "var(--nes-yellow)";
+        }
+    }
+
+    function drawPixelArtShape(x, y, w, h, color, darkColor) {
+        const px = Math.round(x / PIXEL_SIZE) * PIXEL_SIZE;
+        const py = Math.round(y / PIXEL_SIZE) * PIXEL_SIZE;
+        const pw = Math.round(w / PIXEL_SIZE) * PIXEL_SIZE;
+        const ph = Math.round(h / PIXEL_SIZE) * PIXEL_SIZE;
+
+        ctx.fillStyle = color;
+        ctx.fillRect(px + PIXEL_SIZE, py, pw - PIXEL_SIZE*2, ph);
+        ctx.fillRect(px, py + PIXEL_SIZE, pw, ph - PIXEL_SIZE*2);
+        
+        ctx.fillStyle = darkColor;
+        for (let ix = 0; ix < pw; ix += PIXEL_SIZE * 2) {
+            for (let iy = 0; iy < ph; iy += PIXEL_SIZE * 2) {
+                if ((ix + iy) % (PIXEL_SIZE * 4) === 0) {
+                    ctx.fillRect(px + ix, py + iy, PIXEL_SIZE, PIXEL_SIZE);
+                }
+            }
+        }
+    }
+
+    function drawEliteHeli(x, y, color, isShadow = false, isPlayer = true, tiltAngle = 0) {
+        const ox = Math.round(x / PIXEL_SIZE) * PIXEL_SIZE;
+        const oy = Math.round(y / PIXEL_SIZE) * PIXEL_SIZE;
+        
+        const main = isShadow ? SHADOW_COLOR : color;
+        const highlight = isShadow ? SHADOW_COLOR : '#5dade2';
+        const glass = isShadow ? SHADOW_COLOR : '#dff9fb';
+        const metal = isShadow ? SHADOW_COLOR : '#2c3e50';
+
+        ctx.save();
+        if (isPlayer) {
+            ctx.translate(ox + 20, oy + 26);
+            ctx.rotate(tiltAngle);
+            ctx.translate(-(ox + 20), -(oy + 26));
+        }
+
+        if (isPlayer) {
+            ctx.fillStyle = isShadow ? SHADOW_COLOR : '#34495e';
+            ctx.fillRect(ox - 12, oy + 20, 24, 4); 
+            ctx.fillRect(ox + 28, oy + 20, 24, 4); 
+            ctx.fillRect(ox - 8, oy + 24, 8, 8);   
+            ctx.fillRect(ox + 40, oy + 24, 8, 8);  
+
+            ctx.fillStyle = main;
+            ctx.fillRect(ox + 12, oy + 4, 16, 32); 
+            ctx.fillRect(ox + 16, oy, 8, 4);       
+            ctx.fillRect(ox + 8, oy + 12, 24, 16); 
+            
+            if(!isShadow) {
+                ctx.fillStyle = highlight;
+                ctx.fillRect(ox + 12, oy + 12, 4, 16);
+            }
+
+            ctx.fillStyle = main;
+            ctx.fillRect(ox + 16, oy + 36, 8, 12);
+            ctx.fillRect(ox + 12, oy + 48, 16, 4); 
+            
+            ctx.fillStyle = glass;
+            ctx.fillRect(ox + 16, oy + 8, 8, 8);
+            
+            ctx.save();
+            ctx.translate(ox + 20, oy + 20);
+            ctx.rotate(frame * 0.3);
+            ctx.fillStyle = isShadow ? SHADOW_COLOR : 'rgba(255, 255, 255, 0.4)';
+            ctx.fillRect(-28, -2, 56, 4);
+            ctx.fillRect(-2, -28, 4, 56);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = main;
+            ctx.fillRect(ox + 4, oy + 8, 32, 24); 
+            ctx.fillRect(ox + 8, oy + 4, 24, 4);  
+            ctx.fillRect(ox + 16, oy + 32, 8, 16); 
+            ctx.fillRect(ox + 8, oy + 44, 24, 4);  
+
+            ctx.fillStyle = metal;
+            ctx.fillRect(ox, oy + 12, 8, 16);
+            ctx.fillRect(ox + 32, oy + 12, 8, 16);
+
+            if(!isShadow) {
+                ctx.fillStyle = '#922b21'; 
+                ctx.fillRect(ox + 8, oy + 12, 4, 12);
+            }
+
+            ctx.fillStyle = glass;
+            ctx.fillRect(ox + 12, oy + 24, 16, 4);
+
+            ctx.save();
+            ctx.translate(ox + 20, oy + 20);
+            ctx.rotate(-frame * 0.2);
+            ctx.fillStyle = isShadow ? SHADOW_COLOR : 'rgba(0,0,0,0.5)';
+            ctx.fillRect(-24, -2, 48, 4);
+            ctx.fillRect(-2, -24, 4, 48);
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+
+    function drawPixelTank(x, y, isShadow = false) {
+        const ox = Math.round(x / PIXEL_SIZE) * PIXEL_SIZE;
+        const oy = Math.round(y / PIXEL_SIZE) * PIXEL_SIZE;
+        
+        const baseColor = isShadow ? SHADOW_COLOR : '#3d4a35';
+        const treadColor = isShadow ? SHADOW_COLOR : '#1e1e1e';
+        const highlight = isShadow ? SHADOW_COLOR : '#556b2f';
+
+        ctx.fillStyle = treadColor;
+        ctx.fillRect(ox, oy + 4, 8, 32);  
+        ctx.fillRect(ox + 32, oy + 4, 8, 32); 
+        
+        if(!isShadow) {
+            ctx.fillStyle = '#333';
+            const offset = (frame % 4) * 4;
+            for(let ty = 0; ty < 32; ty += 8) {
+                ctx.fillRect(ox, oy + 4 + ((ty + offset) % 32), 8, 4);
+                ctx.fillRect(ox + 32, oy + 4 + ((ty + offset) % 32), 8, 4);
+            }
+        }
+
+        ctx.fillStyle = baseColor;
+        ctx.fillRect(ox + 6, oy + 8, 28, 24);
+        
+        if(!isShadow) {
+            ctx.fillStyle = highlight;
+            ctx.fillRect(ox + 8, oy + 10, 24, 4);
+        }
+
+        const turretX = ox + 12;
+        const turretY = oy + 12;
+        ctx.fillStyle = baseColor;
+        ctx.fillRect(turretX, turretY, 16, 16);
+        
+        const dx = (player.x + 30) - (ox + 20);
+        const dy = (player.y + 26) - (oy + 20);
+        const angle = Math.atan2(dy, dx);
+        
+        ctx.save();
+        ctx.translate(ox + 20, oy + 20);
+        ctx.rotate(angle);
+        ctx.fillStyle = treadColor;
+        ctx.fillRect(0, -2, 24, 4); 
+        ctx.fillRect(20, -4, 6, 8); 
+        ctx.restore();
+    }
+
+    function gameLoop() {
+        if(!gameActive) return;
+        frame++;
+
+        ctx.fillStyle = '#1e392a'; 
+        ctx.fillRect(0,0,canvas.width, canvas.height);
+
+        backgroundLayers.ground.forEach((item, i) => {
+            item.y += item.speed;
+            drawPixelArtShape(item.x, item.y, item.w, item.h, item.color, item.darkColor);
+            if(item.y > canvas.height + 100) {
+                backgroundLayers.ground.splice(i, 1);
+                spawnTerrain();
+            }
+        });
+
+        let targetRotation = 0;
+        if (keys['ArrowLeft']) {
+            player.x -= player.speed;
+            targetRotation = -0.25;
+        }
+        if (keys['ArrowRight']) {
+            player.x += player.speed;
+            targetRotation = 0.25;
+        }
+        if (keys['ArrowUp']) player.y -= player.speed;
+        if (keys['ArrowDown']) player.y += player.speed;
+
+        player.rotation += (targetRotation - player.rotation) * 0.15;
+
+        player.x = Math.max(16, Math.min(canvas.width - player.w - 16, player.x));
+        player.y = Math.max(0, Math.min(canvas.height - player.h, player.y));
+
+        if (keys['Space'] && frame - player.lastShot > player.shotDelay) {
+            player.rockets.push({x: player.x + 8, y: player.y + 12, vy: -9, type: 'light'});
+            player.rockets.push({x: player.x + 32, y: player.y + 12, vy: -9, type: 'light'});
+            player.lastShot = frame;
+        }
+
+        if ((keys['ControlLeft'] || keys['ControlRight']) && frame - player.lastAltShot > player.altShotDelay) {
+            player.rockets.push({x: player.x - 4, y: player.y + 24, vy: -6, type: 'heavy'});
+            player.rockets.push({x: player.x + 44, y: player.y + 24, vy: -6, type: 'heavy'});
+            player.lastAltShot = frame;
+            updateUI();
+        }
+
+        player.rockets.forEach((r, i) => {
+            r.y += r.vy;
+            const px = Math.round(r.x/PIXEL_SIZE)*PIXEL_SIZE;
+            const py = Math.round(r.y/PIXEL_SIZE)*PIXEL_SIZE;
+
+            if (r.type === 'light') {
+                ctx.fillStyle = '#ff9f43';
+                ctx.fillRect(px, py, 4, 4);
+                ctx.fillStyle = '#ecf0f1';
+                ctx.fillRect(px, py + 4, 4, 8);
+            } else {
+                ctx.fillStyle = '#f1c40f';
+                ctx.fillRect(px - 2, py, 8, 8);
+                ctx.fillStyle = '#e67e22';
+                ctx.fillRect(px - 2, py + 8, 8, 12);
+                if(frame % 2 === 0) particles.push({x: r.x+2, y: r.y+20, vx: (Math.random()-0.5)*2, vy: 4, life: 12, color: '#ecf0f1'});
+            }
+            if(r.y < -40) player.rockets.splice(i, 1);
+        });
+
+        if (frame % 10 === 0) updateUI();
+
+        if(frame % 45 === 0) {
+            enemies.push({
+                x: Math.random() * (canvas.width - 40),
+                y: -60, w: 40, h: 44, speed: 2.2 + (score/2500),
+                hp: 1, type: Math.random() > 0.4 ? 'ELITE_COPTER' : 'TANK'
+            });
+        }
+
+        enemies.forEach((en, i) => {
+            en.y += en.speed;
+            
+            if (en.type === 'ELITE_COPTER') {
+                ctx.save();
+                ctx.translate(en.x + 20, en.y + 20);
+                ctx.rotate(Math.PI);
+                ctx.translate(-(en.x + 20), -(en.y + 20));
+                drawEliteHeli(en.x, en.y, '#c0392b', true, false);
+                drawEliteHeli(en.x, en.y, '#c0392b', false, false);
+                ctx.restore();
+            } else {
+                drawPixelTank(en.x + 4, en.y + 4, true); 
+                drawPixelTank(en.x, en.y, false); 
+                if(frame % 5 === 0) particles.push({x: en.x + 20, y: en.y + 40, vx: (Math.random()-0.5)*4, vy: -1, life: 10, color: '#4a3721'});
+            }
+
+            player.rockets.forEach((r, ri) => {
+                const rx = r.type === 'heavy' ? r.x - 2 : r.x;
+                const rw = r.type === 'heavy' ? 12 : 4;
+                if(rx < en.x + en.w && rx + rw > en.x && r.y < en.y + en.h && r.y + 12 > en.y) {
+                    
+                    let damageDealt = false;
+                    if (r.type === 'light' && en.type === 'ELITE_COPTER') {
+                        en.hp -= 1;
+                        damageDealt = true;
+                    } else if (r.type === 'heavy' && en.type === 'TANK') {
+                        en.hp -= 4;
+                        damageDealt = true;
+                    } else {
+                        particles.push({
+                            x: en.x + 20, y: en.y, vx: 0, vy: -1, life: 15, color: '#ecf0f1', text: 'RESIST'
+                        });
+                    }
+
+                    player.rockets.splice(ri, 1);
+                    
+                    if(damageDealt && en.hp <= 0) {
+                        const pCount = r.type === 'heavy' ? 25 : 10;
+                        for(let k=0; k<pCount; k++) particles.push({x: en.x+20, y: en.y+24, vx: (Math.random()-0.5)*15, vy: (Math.random()-0.5)*15, life: 30, color: '#e67e22'});
+                        enemies.splice(i, 1);
+                        score += 100;
+                        updateUI();
+                    }
+                }
+            });
+
+            if(Math.abs(player.x - en.x) < 38 && Math.abs(player.y - en.y) < 38) {
+                player.hp -= 20;
+                enemies.splice(i, 1);
+                updateUI();
+                if(player.hp <= 0) endGame();
+            }
+
+            if(en.y > canvas.height) enemies.splice(i, 1);
+        });
+
+        particles.forEach((p, i) => {
+            p.x += p.vx; p.y += p.vy; p.life--;
+            if (p.text) {
+                ctx.fillStyle = p.color;
+                ctx.font = '8px "Press Start 2P"';
+                ctx.fillText(p.text, p.x - 20, p.y);
+            } else {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(Math.round(p.x/PIXEL_SIZE)*PIXEL_SIZE, Math.round(p.y/PIXEL_SIZE)*PIXEL_SIZE, PIXEL_SIZE, PIXEL_SIZE);
+            }
+            if(p.life <= 0) particles.splice(i, 1);
+        });
+
+        drawEliteHeli(player.x + SHADOW_OFFSET, player.y + SHADOW_OFFSET, '#2e86c1', true, true, player.rotation);
+        drawEliteHeli(player.x, player.y, '#2e86c1', false, true, player.rotation);
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    function endGame() {
+        gameActive = false;
+        gameOverScreen.style.display = 'flex';
+        finalScoreTxt.innerText = score;
+    }
+
+    resize();
+</script>
+</body>
+</html>
